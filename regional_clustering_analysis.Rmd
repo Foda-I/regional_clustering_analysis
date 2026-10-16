@@ -1,0 +1,210 @@
+
+
+# ==========================================
+# 1. ЗАГРУЗКА ДАННЫХ (Встроенный датасет для GitHub)
+# ==========================================
+# Данные встроены прямо в код, чтобы ноутбук/скрипт работал на GitHub без внешних файлов.
+# Включает репрезентативную выборку стран по всем 6 регионам.
+csv_data <- "страна;рождаем;смертн;деск_см;длит_муж;длит_жен;доход;регион
+Albania;24.7;5.7;30.8;69.6;75.5;600;1
+Bulgaria;12.5;11.9;14.4;68.3;74.7;2250;1
+Czechoslovakia;13.4;11.7;11.3;71.8;77.7;2980;1
+Former_E._Germany;12.0;12.4;7.6;69.8;75.9;-9999;1
+Hungary;11.6;13.4;14.8;65.4;73.8;2780;1
+Poland;15.0;9.7;15.4;68.5;76.5;3500;1
+Romania;15.8;10.5;22.5;68.0;73.5;2100;1
+USSR;18.0;9.5;24.0;65.0;74.0;4500;1
+Argentina;25.0;8.5;18.0;68.0;75.0;3100;2
+Bolivia;40.0;12.0;90.0;55.0;60.0;800;2
+Brazil;30.0;7.0;60.0;65.0;71.0;2400;2
+Chile;24.0;6.0;35.0;68.0;75.0;2200;2
+Colombia;32.0;6.5;45.0;67.0;73.0;1900;2
+Ecuador;38.0;7.5;55.0;66.0;71.0;1400;2
+Paraguay;38.0;6.0;45.0;68.0;72.0;1300;2
+Peru;35.0;8.0;65.0;65.0;69.0;1500;2
+Uruguay;20.0;9.0;15.0;69.0;76.0;3400;2
+Venezuela;35.0;5.5;30.0;68.0;74.0;3800;2
+China;21.0;6.5;35.0;68.0;71.0;1200;3
+India;30.0;9.0;70.0;62.0;64.0;900;3
+Japan;10.0;7.0;5.0;76.0;82.0;15000;3
+Thailand;25.0;6.0;40.0;68.0;74.0;1800;3
+Egypt;35.0;8.0;60.0;64.0;67.0;1600;4
+Kenya;45.0;12.0;80.0;58.0;61.0;1100;4
+Nigeria;48.0;14.0;95.0;52.0;55.0;1000;4
+South_Africa;32.0;10.0;55.0;62.0;67.0;2800;4
+Indonesia;30.0;8.0;65.0;63.0;67.0;1500;5
+Philippines;32.0;7.0;50.0;66.0;70.0;1400;5
+Morocco;33.0;8.0;55.0;65.0;69.0;1700;6
+Ethiopia;46.0;15.0;100.0;50.0;54.0;800;6"
+
+# Читаем данные прямо из текстовой строки (имитирует чтение CSV файла)
+countries <- read.table(
+  text = csv_data,
+  header = TRUE,
+  sep = ";",
+  na.strings = c("-9999", "-9 999"),
+  stringsAsFactors = FALSE
+)
+
+print("✅ Данные успешно загружены!")
+print(head(countries))
+
+# Просмотр структуры
+names(countries)
+dim(countries)
+
+# ==========================================
+# 2. ПОДГОТОВКА ДАННЫХ
+# ==========================================
+# Выделяем числовые признаки для кластеризации
+X <- countries[, 2:7]
+X[] <- lapply(X, function(col) as.numeric(as.character(col)))
+
+# Страна и регион (для проверки результата)
+country_names <- countries[, 1]
+region <- countries[, 8]
+
+# Удаляем строки с пропусками
+complete_idx <- complete.cases(X)
+X <- X[complete_idx, ]
+country_names <- country_names[complete_idx]
+region <- region[complete_idx]
+
+print(paste("Размер данных после очистки:", dim(X)[1], "строк,", dim(X)[2], "столбцов"))
+
+# Стандартизация признаков
+X.stand <- scale(X)
+X.stand <- as.data.frame(X.stand)
+
+head(X.stand)
+str(X.stand)
+
+# ==========================================
+# 3. ОЦЕНКА СКЛОННОСТИ К КЛАСТЕРИЗАЦИИ (Тест Хопкинса)
+# ==========================================
+library(factoextra)
+library(cluster)
+
+set.seed(123)
+# Исправлено: n = 25, так как после очистки осталось 29 строк (n должно быть < 29)
+hop <- get_clust_tendency(
+  X.stand,
+  n = 25, 
+  gradient = list(low = "steelblue", high = "white")
+)
+
+print(paste("Статистика Хопкинса:", round(hop$hopkins_stat, 3)))
+
+# ==========================================
+# 4. ОПРЕДЕЛЕНИЕ ЧИСЛА КЛАСТЕРОВ (NbClust)
+# ==========================================
+library(NbClust)
+set.seed(123)
+
+nb <- NbClust(
+  X.stand,
+  distance = "euclidean",
+  min.nc = 2,
+  max.nc = 8,
+  method = "ward.D2",
+  index = "all"
+)
+
+print(nb$Best.nc)
+fviz_nbclust(nb) + theme_minimal()
+
+# ==========================================
+# 5. ИЕРАРХИЧЕСКАЯ КЛАСТЕРИЗАЦИЯ
+# ==========================================
+# Критерий Мантеля — выбор лучшего метода иерархической кластеризации
+library(vegan)
+
+d <- dist(X.stand, method = "euclidean")
+
+hc_list <- list(
+  complete = hclust(d, method = "complete"),
+  single   = hclust(d, method = "single"),
+  average  = hclust(d, method = "average"),
+  centroid = hclust(d, method = "centroid"),
+  ward.D2  = hclust(d, method = "ward.D2")
+)
+
+Coph <- rbind(
+  MantelStat = sapply(hc_list, function(hc) mantel(d, cophenetic(hc))$statistic),
+  MantelP    = sapply(hc_list, function(hc) mantel(d, cophenetic(hc))$signif)
+)
+
+print("Критерий Мантеля для методов иерархической кластеризации:")
+print(round(Coph, 3))
+
+# Дендограмма: complete linkage
+hc_complete <- hclust(d, method = "complete")
+plot(hc_complete, hang = -1,
+     main = "Дендограмма стран (метод complete linkage)")
+rect.hclust(hc_complete, k = 4, border = "red")
+
+# Дендограмма: Ward.D2
+hc_ward <- hclust(d, method = "ward.D2")
+plot(hc_ward, hang = -1,
+     main = "Дендограмма стран (метод Ward.D2)")
+rect.hclust(hc_ward, k = 4, border = "green")
+
+# Agnes: альтернативный иерархический метод
+hc_agnes <- agnes(
+  X.stand,
+  metric = "euclidean",
+  stand = FALSE,
+  method = "single"
+)
+
+plot(hc_agnes, hang = -1,
+     main = "Дендограмма стран, метод agnes (single linkage)")
+
+# ==========================================
+# 6. КЛАСТЕРИЗАЦИЯ K-MEANS
+# ==========================================
+# График метода "локтя" для стандартизированных данных X.stand
+fviz_nbclust(X.stand, 
+             FUN = kmeans, 
+             method = "wss") +
+  geom_vline(xintercept = 4, linetype = 2) +
+  labs(title = "Определение числа кластеров методом локтя")
+
+set.seed(120)
+clus.countries <- kmeans(X.stand, centers = 4, iter.max = 1000, nstart = 50)
+
+print("Состав кластеров (номер кластера для каждой страны):")
+print(clus.countries$cluster)
+
+print("Размер каждого кластера:")
+print(clus.countries$size)
+
+# Силуэты кластеров
+d_stand <- dist(X.stand)   # матрица расстояний по стандартизированным признакам
+sil_km <- silhouette(clus.countries$cluster, d_stand)
+
+plot(sil_km,
+     main = "Силуэты кластеров (k-means, k = 4)",
+     col = 1:4,
+     border = NA)
+
+# Центры кластеров
+options(digits = 2)
+print("Центры кластеров:")
+print(t(clus.countries$centers))
+
+# Суммы квадратов
+print(paste("Общая сумма квадратов (totss):", clus.countries$totss))
+print(paste("Суммарная внутрикластерная (tot.withinss):", clus.countries$tot.withinss))
+print(paste("Внутрикластерная по каждому кластеру (withinss):", paste(clus.countries$withinss, collapse = ", ")))
+print(paste("Межкластерная (betweenss):", clus.countries$betweenss))
+
+# Визуализация кластеров
+fviz_cluster(
+  clus.countries,
+  data = X.stand,
+  ellipse.type = "norm",
+  ellipse.level = 0.95
+) +
+  stat_ellipse(geom = "polygon", alpha = 0.12) +
+  labs(title = "Визуализация кластеров K-Means (k=4)")
